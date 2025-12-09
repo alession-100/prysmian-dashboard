@@ -30,16 +30,22 @@ st.markdown("""
 # Load data
 @st.cache_data
 def get_data():
-    data_dir = Path(__file__).parent / 'data'
-    excel_path = data_dir / 'Prysmian_Shipments_Nov23_Oct25.xlsx'
-    csv_path = data_dir / 'prysmian_shipments.csv'
-    if excel_path.exists():
-        return load_data(str(excel_path))
-    elif csv_path.exists():
-        return load_data(str(csv_path))
-    else:
-        st.error(f"Data file not found in: {data_dir}")
-        st.stop()
+    # Try multiple possible paths (handles both local and Streamlit Cloud)
+    possible_paths = [
+        Path(__file__).parent / 'data' / 'Prysmian_Shipments_Nov23_Oct25.xlsx',  # Local
+        Path('data') / 'Prysmian_Shipments_Nov23_Oct25.xlsx',  # Streamlit Cloud
+        Path('.') / 'data' / 'Prysmian_Shipments_Nov23_Oct25.xlsx',  # Alternative
+    ]
+    
+    for path in possible_paths:
+        if path.exists():
+            return load_data(str(path))
+    
+    # If not found, show helpful error
+    st.error("Data file not found. Checked paths:")
+    for p in possible_paths:
+        st.write(f"- {p.absolute()} (exists: {p.exists()})")
+    st.stop()
 
 df = get_data()
 
