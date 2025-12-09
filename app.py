@@ -7,11 +7,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent))
-from utils.analysis_toolkit import load_data, calculate_kpis, get_carrier_stats
+# Import from shared module in same directory
+from shared import load_data, calculate_kpis, get_carrier_stats
 
 # Page config
 st.set_page_config(
@@ -21,12 +20,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS
 st.markdown("""
 <style>
     .main-header { font-size: 2.5rem; font-weight: 700; color: #1E3A5F; margin-bottom: 0.5rem; }
     .sub-header { font-size: 1.1rem; color: #666; margin-bottom: 2rem; }
-    .stMetric { background-color: #f8f9fa; padding: 1rem; border-radius: 10px; border-left: 4px solid #1E3A5F; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,10 +44,9 @@ def get_data():
 df = get_data()
 
 # Sidebar
-st.sidebar.title("Prysmian Analytics")
+st.sidebar.title("🚢 Prysmian Analytics")
 st.sidebar.markdown("---")
 
-# Filters
 if 'Departure_Date' in df.columns and df['Departure_Date'].notna().any():
     min_date = df['Departure_Date'].min().date()
     max_date = df['Departure_Date'].max().date()
@@ -62,9 +58,6 @@ else:
 selected_carriers = st.sidebar.multiselect("Select Carriers",
     options=sorted(df['Carrier_Name'].unique().tolist()), default=[])
 
-selected_routes = st.sidebar.multiselect("Select Routes",
-    options=sorted(df['Route'].unique().tolist()), default=[])
-
 # Apply filters
 filtered_df = df.copy()
 if date_range and len(date_range) == 2:
@@ -74,17 +67,14 @@ if date_range and len(date_range) == 2:
     ]
 if selected_carriers:
     filtered_df = filtered_df[filtered_df['Carrier_Name'].isin(selected_carriers)]
-if selected_routes:
-    filtered_df = filtered_df[filtered_df['Route'].isin(selected_routes)]
 
-# KPIs
 kpis = calculate_kpis(filtered_df)
 
 # Header
-st.markdown('<p class="main-header">Prysmian Ocean Logistics Analytics</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-header">🚢 Prysmian Ocean Logistics Analytics</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Executive Dashboard | Container Shipment Performance (Nov 2023 - Oct 2025)</p>', unsafe_allow_html=True)
 
-if selected_carriers or selected_routes:
+if selected_carriers:
     st.info(f"Showing **{kpis['total_shipments']:,}** shipments ({kpis['total_containers']:,} containers) based on filters")
 
 # KPI Row
@@ -156,7 +146,6 @@ with col_d1:
 with col_d2:
     st.markdown("### Carrier Performance Quadrant")
     carrier_perf = carrier_stats.copy()
-    # Ensure positive bubble sizes
     carrier_perf['Bubble_Size'] = carrier_perf['Avg_Delay'].abs() + 5
     
     fig = px.scatter(carrier_perf, x='Shipments', y='On_Time_Rate',
@@ -174,34 +163,33 @@ st.markdown("### Quick Insights")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown("#### Best Performer")
+    st.markdown("#### 🏆 Best Performer")
     qualified = carrier_stats[carrier_stats['Shipments'] >= 20]
     if len(qualified) > 0:
         best = qualified.loc[qualified['On_Time_Rate'].idxmax()]
         st.success(f"**{best['Carrier_Name']}**\n\n"
                    f"- On-Time: **{best['On_Time_Rate']:.1f}%**\n"
                    f"- Avg Delay: {best['Avg_Delay']:.1f} days\n"
-                   f"- Shipments: {best['Shipments']:,}")
+                   f"- Shipments: {int(best['Shipments']):,}")
 
 with col2:
-    st.markdown("#### Highest Risk")
+    st.markdown("#### ⚠️ Highest Risk")
     if len(carrier_stats) > 0:
         worst = carrier_stats.loc[carrier_stats['Severe_Late_Rate'].idxmax()]
         st.error(f"**{worst['Carrier_Name']}**\n\n"
                  f"- Severe Late: **{worst['Severe_Late_Rate']:.1f}%**\n"
                  f"- Avg Delay: {worst['Avg_Delay']:.1f} days\n"
-                 f"- Shipments: {worst['Shipments']:,}")
+                 f"- Shipments: {int(worst['Shipments']):,}")
 
 with col3:
-    st.markdown("#### Volume Leader")
+    st.markdown("#### 📊 Volume Leader")
     if len(carrier_stats) > 0:
         leader = carrier_stats.iloc[0]
         st.info(f"**{leader['Carrier_Name']}**\n\n"
                 f"- Market Share: **{leader['Market_Share']:.1f}%**\n"
                 f"- On-Time: {leader['On_Time_Rate']:.1f}%\n"
-                f"- Shipments: {leader['Shipments']:,}")
+                f"- Shipments: {int(leader['Shipments']):,}")
 
-# Footer
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
