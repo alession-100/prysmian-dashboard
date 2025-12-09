@@ -1,0 +1,211 @@
+"""
+Prysmian Ocean Logistics Analytics Dashboard
+Main application - Executive Overview
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent))
+from utils.analysis_toolkit import load_data, calculate_kpis, get_carrier_stats
+
+# Page config
+st.set_page_config(
+    page_title="Prysmian Logistics Dashboard",
+    page_icon="🚢",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# CSS
+st.markdown("""
+<style>
+    .main-header { font-size: 2.5rem; font-weight: 700; color: #1E3A5F; margin-bottom: 0.5rem; }
+    .sub-header { font-size: 1.1rem; color: #666; margin-bottom: 2rem; }
+    .stMetric { background-color: #f8f9fa; padding: 1rem; border-radius: 10px; border-left: 4px solid #1E3A5F; }
+</style>
+""", unsafe_allow_html=True)
+
+# Load data
+@st.cache_data
+def get_data():
+    data_dir = Path(__file__).parent / 'data'
+    excel_path = data_dir / 'Prysmian_Shipments_Nov23_Oct25.xlsx'
+    csv_path = data_dir / 'prysmian_shipments.csv'
+    if excel_path.exists():
+        return load_data(str(excel_path))
+    elif csv_path.exists():
+        return load_data(str(csv_path))
+    else:
+        st.error(f"Data file not found in: {data_dir}")
+        st.stop()
+
+df = get_data()
+
+# Sidebar
+st.sidebar.title("Prysmian Analytics")
+st.sidebar.markdown("---")
+
+# Filters
+if 'Departure_Date' in df.columns and df['Departure_Date'].notna().any():
+    min_date = df['Departure_Date'].min().date()
+    max_date = df['Departure_Date'].max().date()
+    date_range = st.sidebar.date_input("Date Range", value=(min_date, max_date),
+                                        min_value=min_date, max_value=max_date)
+else:
+    date_range = None
+
+selected_carriers = st.sidebar.multiselect("Select Carriers",
+    options=sorted(df['Carrier_Name'].unique().tolist()), default=[])
+
+selected_routes = st.sidebar.multiselect("Select Routes",
+    options=sorted(df['Route'].unique().tolist()), default=[])
+
+# Apply filters
+filtered_df = df.copy()
+if date_range and len(date_range) == 2:
+    filtered_df = filtered_df[
+        (filtered_df['Departure_Date'].dt.date >= date_range[0]) &
+        (filtered_df['Departure_Date'].dt.date <= date_range[1])
+    ]
+if selected_carriers:
+    filtered_df = filtered_df[filtered_df['Carrier_Name'].isin(selected_carriers)]
+if selected_routes:
+    filtered_df = filtered_df[filtered_df['Route'].isin(selected_routes)]
+
+# KPIs
+kpis = calculate_kpis(filtered_df)
+
+# Header
+st.markdown('<p class="main-header">Prysmian Ocean Logistics Analytics</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Executive Dashboard | Container Shipment Performance (Nov 2023 - Oct 2025)</p>', unsafe_allow_html=True)
+
+if selected_carriers or selected_routes:
+    st.info(f"Showing **{kpis['total_shipments']:,}** shipments ({kpis['total_containers']:,} containers) based on filters")
+
+# KPI Row
+st.markdown("### Key Performance Indicators")
+col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+col1.metric("Shipments (B/L)", f"{kpis['total_shipments']:,}")
+col2.metric("Containers", f"{kpis['total_containers']:,}")
+col3.metric("On-Time Rate", f"{kpis['on_time_rate']:.1f}%")
+col4.metric("Avg Delay", f"{kpis['avg_delay']:.1f} days")
+col5.metric("Severe Late (>7d)", f"{kpis['severe_late_rate']:.1f}%")
+col6.metric("Carriers", f"{kpis['total_carriers']}")
+
+st.markdown("---")
+
+# Charts
+col_left, col_right = st.columns([1.2, 1])
+
+with col_left:
+    st.markdown("### Top Carriers by Shipment Volume")
+    carrier_stats = get_carrier_stats(filtered_df).head(12)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=carrier_stats['Carrier_Name'], y=carrier_stats['Shipments'],
+        marker_color='#1E3A5F', text=carrier_stats['Shipments'], textposition='outside'
+    ))
+    fig.update_layout(height=400, xaxis_title="Carrier", yaxis_title="Shipments (B/L)",
+                      margin=dict(t=20, b=80))
+    fig.update_xaxes(tickangle=45)
+    st.plotly_chart(fig, use_container_width=True)
+
+with col_right:
+    st.markdown("### Market Share Distribution")
+    top5 = carrier_stats.head(5).copy()
+    others = carrier_stats.iloc[5:]['Shipments'].sum() if len(carrier_stats) > 5 else 0
+    
+    if others > 0:
+        pie_data = pd.concat([top5[['Carrier_Name', 'Shipments']],
+                              pd.DataFrame({'Carrier_Name': ['Others'], 'Shipments': [others]})])
+    else:
+        pie_data = top5[['Carrier_Name', 'Shipments']]
+    
+    fig = px.pie(pie_data, values='Shipments', names='Carrier_Name',
+                 color_discrete_sequence=px.colors.qualitative.Set2, hole=0.4)
+    fig.update_traces(textposition='outside', textinfo='percent+label')
+    fig.update_layout(height=400, showlegend=False, margin=dict(t=20, b=20))
+    st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+
+# Delay Analysis
+col_d1, col_d2 = st.columns(2)
+
+with col_d1:
+    st.markdown("### Delay Distribution")
+    delay_dist = filtered_df['Delay_Category'].value_counts().reset_index()
+    delay_dist.columns = ['Category', 'Count']
+    
+    color_map = {'On Time/Early': '#28a745', '1-3 Days Late': '#ffc107',
+                 '4-7 Days Late': '#fd7e14', '7+ Days Late': '#dc3545'}
+    
+    fig = px.bar(delay_dist, x='Category', y='Count', color='Category',
+                 color_discrete_map=color_map, text='Count')
+    fig.update_layout(height=350, showlegend=False)
+    fig.update_traces(textposition='outside')
+    st.plotly_chart(fig, use_container_width=True)
+
+with col_d2:
+    st.markdown("### Carrier Performance Quadrant")
+    carrier_perf = carrier_stats.copy()
+    # Ensure positive bubble sizes
+    carrier_perf['Bubble_Size'] = carrier_perf['Avg_Delay'].abs() + 5
+    
+    fig = px.scatter(carrier_perf, x='Shipments', y='On_Time_Rate',
+                     size='Bubble_Size', color='Avg_Delay', color_continuous_scale='RdYlGn_r',
+                     hover_name='Carrier_Name', text='Carrier_Name')
+    fig.update_traces(textposition='top center', textfont_size=9)
+    fig.add_hline(y=50, line_dash="dash", line_color="gray")
+    fig.update_layout(height=350, xaxis_title="Volume (Shipments)", yaxis_title="On-Time Rate (%)")
+    st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+
+# Quick Insights
+st.markdown("### Quick Insights")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown("#### Best Performer")
+    qualified = carrier_stats[carrier_stats['Shipments'] >= 20]
+    if len(qualified) > 0:
+        best = qualified.loc[qualified['On_Time_Rate'].idxmax()]
+        st.success(f"**{best['Carrier_Name']}**\n\n"
+                   f"- On-Time: **{best['On_Time_Rate']:.1f}%**\n"
+                   f"- Avg Delay: {best['Avg_Delay']:.1f} days\n"
+                   f"- Shipments: {best['Shipments']:,}")
+
+with col2:
+    st.markdown("#### Highest Risk")
+    if len(carrier_stats) > 0:
+        worst = carrier_stats.loc[carrier_stats['Severe_Late_Rate'].idxmax()]
+        st.error(f"**{worst['Carrier_Name']}**\n\n"
+                 f"- Severe Late: **{worst['Severe_Late_Rate']:.1f}%**\n"
+                 f"- Avg Delay: {worst['Avg_Delay']:.1f} days\n"
+                 f"- Shipments: {worst['Shipments']:,}")
+
+with col3:
+    st.markdown("#### Volume Leader")
+    if len(carrier_stats) > 0:
+        leader = carrier_stats.iloc[0]
+        st.info(f"**{leader['Carrier_Name']}**\n\n"
+                f"- Market Share: **{leader['Market_Share']:.1f}%**\n"
+                f"- On-Time: {leader['On_Time_Rate']:.1f}%\n"
+                f"- Shipments: {leader['Shipments']:,}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    Prysmian Ocean Logistics Analytics | GEMOS Challenge 2025<br>
+    <small>Shipments counted by unique Bill of Lading</small>
+</div>
+""", unsafe_allow_html=True)
