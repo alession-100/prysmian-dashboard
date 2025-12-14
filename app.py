@@ -9,7 +9,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 
-# Import from shared module in same directory
 from shared import load_data, calculate_kpis, get_carrier_stats
 
 # Page config
@@ -30,60 +29,96 @@ st.markdown("""
 # Load data
 @st.cache_data
 def get_data():
-    # Try multiple possible paths (handles both local and Streamlit Cloud)
     possible_paths = [
-        Path(__file__).parent / 'data' / 'Prysmian_Shipments_Nov23_Oct25.xlsx',  # Local
-        Path('data') / 'Prysmian_Shipments_Nov23_Oct25.xlsx',  # Streamlit Cloud
-        Path('.') / 'data' / 'Prysmian_Shipments_Nov23_Oct25.xlsx',  # Alternative
+        Path(__file__).parent / 'data' / 'Prysmian_Shipments_Nov23_Oct25.xlsx',
+        Path('data') / 'Prysmian_Shipments_Nov23_Oct25.xlsx',
     ]
-    
     for path in possible_paths:
         if path.exists():
             return load_data(str(path))
-    
-    # If not found, show helpful error
-    st.error("Data file not found. Checked paths:")
-    for p in possible_paths:
-        st.write(f"- {p.absolute()} (exists: {p.exists()})")
+    st.error("Data file not found. Please ensure data/Prysmian_Shipments_Nov23_Oct25.xlsx exists.")
     st.stop()
 
 df = get_data()
 
-# Sidebar
+# ============== SIDEBAR FILTERS ==============
 st.sidebar.title("🚢 Prysmian Analytics")
-st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔍 Global Filters")
 
+# Date filter
 if 'Departure_Date' in df.columns and df['Departure_Date'].notna().any():
     min_date = df['Departure_Date'].min().date()
     max_date = df['Departure_Date'].max().date()
-    date_range = st.sidebar.date_input("Date Range", value=(min_date, max_date),
-                                        min_value=min_date, max_value=max_date)
+    date_range = st.sidebar.date_input(
+        "📅 Date Range",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date
+    )
 else:
     date_range = None
 
-selected_carriers = st.sidebar.multiselect("Select Carriers",
-    options=sorted(df['Carrier_Name'].unique().tolist()), default=[])
+# Carrier filter
+all_carriers = sorted(df['Carrier_Name'].unique().tolist())
+selected_carriers = st.sidebar.multiselect(
+    "🏢 Carriers",
+    options=all_carriers,
+    default=[],
+    help="Leave empty to include all carriers"
+)
 
-# Apply filters
+# Origin country filter
+all_origins = sorted(df['Origin_Country_Name'].unique().tolist())
+selected_origins = st.sidebar.multiselect(
+    "🌍 Origin Countries",
+    options=all_origins,
+    default=[],
+    help="Leave empty to include all origins"
+)
+
+st.sidebar.markdown("---")
+
+# ============== APPLY FILTERS ==============
 filtered_df = df.copy()
+
 if date_range and len(date_range) == 2:
     filtered_df = filtered_df[
         (filtered_df['Departure_Date'].dt.date >= date_range[0]) &
         (filtered_df['Departure_Date'].dt.date <= date_range[1])
     ]
+
 if selected_carriers:
     filtered_df = filtered_df[filtered_df['Carrier_Name'].isin(selected_carriers)]
 
-kpis = calculate_kpis(filtered_df)
+if selected_origins:
+    filtered_df = filtered_df[filtered_df['Origin_Country_Name'].isin(selected_origins)]
 
-# Header
+# Show filter status
+total_records = len(df)
+filtered_records = len(filtered_df)
+if filtered_records < total_records:
+    st.sidebar.success(f"✅ Showing {filtered_records:,} of {total_records:,} containers")
+else:
+    st.sidebar.info(f"📊 Showing all {total_records:,} containers")
+
+# ============== CALCULATE METRICS ==============
+kpis = calculate_kpis(filtered_df)
+carrier_stats = get_carrier_stats(filtered_df)
+
+# ============== HEADER ==============
 st.markdown('<p class="main-header">🚢 Prysmian Ocean Logistics Analytics</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Executive Dashboard | Container Shipment Performance (Nov 2023 - Oct 2025)</p>', unsafe_allow_html=True)
 
-if selected_carriers:
-    st.info(f"Showing **{kpis['total_shipments']:,}** shipments ({kpis['total_containers']:,} containers) based on filters")
+# Filter indicator
+if selected_carriers or selected_origins:
+    filter_parts = []
+    if selected_carriers:
+        filter_parts.append(f"{len(selected_carriers)} carriers")
+    if selected_origins:
+        filter_parts.append(f"{len(selected_origins)} origins")
+    st.info(f"🔍 **Filtered view**: {', '.join(filter_parts)} | {kpis['total_shipments']:,} shipments ({kpis['total_containers']:,} containers)")
 
-# KPI Row
+# ============== KPI ROW ==============
 st.markdown("### Key Performance Indicators")
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 
@@ -96,17 +131,20 @@ col6.metric("Carriers", f"{kpis['total_carriers']}")
 
 st.markdown("---")
 
-# Charts
+# ============== CHARTS ==============
 col_left, col_right = st.columns([1.2, 1])
 
 with col_left:
     st.markdown("### Top Carriers by Shipment Volume")
-    carrier_stats = get_carrier_stats(filtered_df).head(12)
+    chart_data = carrier_stats.head(12)
     
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=carrier_stats['Carrier_Name'], y=carrier_stats['Shipments'],
-        marker_color='#1E3A5F', text=carrier_stats['Shipments'], textposition='outside'
+        x=chart_data['Carrier_Name'],
+        y=chart_data['Shipments'],
+        marker_color='#1E3A5F',
+        text=chart_data['Shipments'],
+        textposition='outside'
     ))
     fig.update_layout(height=400, xaxis_title="Carrier", yaxis_title="Shipments (B/L)",
                       margin=dict(t=20, b=80))
@@ -177,6 +215,8 @@ with col1:
                    f"- On-Time: **{best['On_Time_Rate']:.1f}%**\n"
                    f"- Avg Delay: {best['Avg_Delay']:.1f} days\n"
                    f"- Shipments: {int(best['Shipments']):,}")
+    else:
+        st.warning("No carriers with 20+ shipments in filtered data")
 
 with col2:
     st.markdown("#### ⚠️ Highest Risk")
@@ -186,6 +226,8 @@ with col2:
                  f"- Severe Late: **{worst['Severe_Late_Rate']:.1f}%**\n"
                  f"- Avg Delay: {worst['Avg_Delay']:.1f} days\n"
                  f"- Shipments: {int(worst['Shipments']):,}")
+    else:
+        st.info("No data available")
 
 with col3:
     st.markdown("#### 📊 Volume Leader")
@@ -195,11 +237,13 @@ with col3:
                 f"- Market Share: **{leader['Market_Share']:.1f}%**\n"
                 f"- On-Time: {leader['On_Time_Rate']:.1f}%\n"
                 f"- Shipments: {int(leader['Shipments']):,}")
+    else:
+        st.info("No data available")
 
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
     Prysmian Ocean Logistics Analytics | GEMOS Challenge 2025<br>
-    <small>Shipments counted by unique Bill of Lading</small>
+    <small>Shipments counted by unique Bill of Lading | Use sidebar filters to explore data</small>
 </div>
 """, unsafe_allow_html=True)
