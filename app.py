@@ -211,7 +211,7 @@ st.markdown("---")
 
 # Quick Insights
 st.markdown("### Quick Insights")
-col1, col2, col3 = st.columns(3)
+col1, col2, col3 = st.columns(4)
 
 with col1:
     st.markdown("#### 🏆 Best Performer")
