@@ -211,7 +211,7 @@ st.markdown("---")
 
 # Quick Insights
 st.markdown("### Quick Insights")
-col1, col2, col3 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("#### 🏆 Best Performer")
@@ -221,7 +221,7 @@ with col1:
         st.success(f"**{best['Carrier_Name']}**\n\n"
                    f"- On-Time: **{best['On_Time_Rate']:.1f}%**\n"
                    f"- Avg Delay: {best['Avg_Delay']:.1f} days\n"
-                   f"- Shipments: {int(best['Shipments']):,}"
+                   f"- Shipments: {int(best['Shipments']):.1f}"
                    f"- Containers: {int(best['Containers']):,}")
     else:
         st.warning("No carriers with 20+ shipments in filtered data")
@@ -233,7 +233,7 @@ with col2:
         st.error(f"**{worst['Carrier_Name']}**\n\n"
                  f"- Severe Late: **{worst['Severe_Late_Rate']:.1f}%**\n"
                  f"- Avg Delay: {worst['Avg_Delay']:.1f} days\n"
-                 f"- Shipments: {int(worst['Shipments']):,}"
+                 f"- Shipments: {int(worst['Shipments']):.1f}"
                  f"- Containers: {int(worst['Containers']):,}")
     else:
         st.info("No data available")
@@ -246,7 +246,7 @@ with col3:
         st.info(f"**{leader['Carrier_Name']}**\n\n"
                 f"- Market Share: **{container_share:.1f}%**\n"
                 f"- On-Time: {leader['On_Time_Rate']:.1f}%\n"
-                f"- Shipments: {int(leader['Shipments']):,}"
+                f"- Shipments: {int(leader['Shipments']):.1f}"
                 f"- Containers: {int(leader['Containers']):,}")
     else:
         st.info("No data available")
