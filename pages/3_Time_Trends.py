@@ -1,5 +1,6 @@
 """
 Time Trends Analysis Page - All charts respond to filters
+Volume = Containers, Performance = Shipments (B/L)
 """
 
 import streamlit as st
@@ -64,6 +65,15 @@ selected_origins = st.sidebar.multiselect(
     help="Leave empty to include all origins"
 )
 
+# Destination filter
+all_destinations = sorted(df['POD_Country_Name'].unique().tolist())
+selected_destinations = st.sidebar.multiselect(
+    "🎯 Destination Countries",
+    options=all_destinations,
+    default=[],
+    help="Leave empty to include all destinations"
+)
+
 st.sidebar.markdown("---")
 
 # ============== APPLY FILTERS ==============
@@ -81,6 +91,9 @@ if selected_carriers:
 if selected_origins:
     filtered_df = filtered_df[filtered_df['Origin_Country_Name'].isin(selected_origins)]
 
+if selected_destinations:
+    filtered_df = filtered_df[filtered_df['POD_Country_Name'].isin(selected_destinations)]
+
 # Show filter status
 if len(filtered_df) < len(df):
     st.sidebar.success(f"✅ {len(filtered_df):,} of {len(df):,} containers")
@@ -92,27 +105,29 @@ monthly = get_monthly_trends(filtered_df)
 monthly['Month_Year_Dt'] = pd.to_datetime(monthly['Month_Year'])
 monthly = monthly.sort_values('Month_Year_Dt')
 
-# Carrier monthly from filtered data
+# Carrier monthly from filtered data (using containers for volume)
 carrier_monthly = filtered_df.groupby(['Month_Year', 'Carrier_Name']).agg({
-    'Bill_of_Lading': 'nunique', 'Arrival_Delay': 'mean'
+    'Container_Number': 'count',
+    'Bill_of_Lading': 'nunique',
+    'Arrival_Delay': 'mean'
 }).reset_index()
-carrier_monthly.columns = ['Month', 'Carrier', 'Shipments', 'Avg_Delay']
+carrier_monthly.columns = ['Month', 'Carrier', 'Containers', 'Shipments', 'Avg_Delay']
 carrier_monthly['Month_Dt'] = pd.to_datetime(carrier_monthly['Month'])
 
-# Top carriers in filtered data
-top5 = filtered_df['Carrier_Name'].value_counts().head(5).index.tolist()
+# Top carriers in filtered data (by containers)
+top5 = filtered_df.groupby('Carrier_Name')['Container_Number'].count().nlargest(5).index.tolist()
 
 # ============== KPIs ==============
 st.markdown("### Trend Overview")
 col1, col2, col3, col4 = st.columns(4)
 
 if len(monthly) >= 6:
-    recent = monthly.tail(3)['Shipments'].sum()
-    prior = monthly.iloc[-6:-3]['Shipments'].sum() if len(monthly) >= 6 else monthly.head(3)['Shipments'].sum()
+    recent = monthly.tail(3)['Containers'].sum()
+    prior = monthly.iloc[-6:-3]['Containers'].sum() if len(monthly) >= 6 else monthly.head(3)['Containers'].sum()
     growth = ((recent - prior) / prior * 100) if prior > 0 else 0
-    col1.metric("Recent Growth (3m)", f"{growth:+.1f}%", f"{int(recent - prior):+,} shipments")
+    col1.metric("Recent Growth (3m)", f"{growth:+.1f}%", f"{int(recent - prior):+,} containers")
 else:
-    col1.metric("Total Shipments", f"{monthly['Shipments'].sum():,}")
+    col1.metric("Total Containers", f"{monthly['Containers'].sum():,}")
 
 if len(monthly) >= 4:
     recent_delay = monthly.tail(2)['Avg_Delay'].mean()
@@ -122,9 +137,9 @@ else:
     col2.metric("Avg Delay", f"{monthly['Avg_Delay'].mean():.1f}d")
 
 if len(monthly) > 0:
-    peak_idx = monthly['Shipments'].idxmax()
+    peak_idx = monthly['Containers'].idxmax()
     peak = monthly.loc[peak_idx]
-    col3.metric("Peak Month", str(peak['Month_Year']), f"{int(peak['Shipments']):,} shipments")
+    col3.metric("Peak Month", str(peak['Month_Year']), f"{int(peak['Containers']):,} containers")
     
     best_idx = monthly['Avg_Delay'].idxmin()
     best = monthly.loc[best_idx]
@@ -136,34 +151,36 @@ st.markdown("---")
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Volume Trends", "⏱️ Delay Trends", "🏢 Carrier Evolution", "📅 Seasonality"])
 
 with tab1:
-    st.markdown("#### Monthly Shipment Volume")
+    st.markdown("#### Monthly Container Volume")
+    st.caption("*Volume measured in containers*")
     
     if len(monthly) > 0:
-        monthly['MA3'] = monthly['Shipments'].rolling(3, min_periods=1).mean()
+        monthly['MA3'] = monthly['Containers'].rolling(3, min_periods=1).mean()
         
         fig = make_subplots(specs=[[{"secondary_y": False}]])
-        fig.add_trace(go.Bar(x=monthly['Month_Year_Dt'], y=monthly['Shipments'], name='Shipments',
+        fig.add_trace(go.Bar(x=monthly['Month_Year_Dt'], y=monthly['Containers'], name='Containers',
                              marker_color='#1E3A5F', opacity=0.7))
         fig.add_trace(go.Scatter(x=monthly['Month_Year_Dt'], y=monthly['MA3'], name='3M Moving Avg',
                                  line=dict(color='#E74C3C', width=3)))
         fig.update_layout(height=450, legend=dict(orientation="h", y=1.02),
-                          xaxis_title="Month", yaxis_title="Shipments (B/L)")
+                          xaxis_title="Month", yaxis_title="Containers")
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("No data for selected filters")
     
-    st.markdown("#### Carrier Mix Over Time")
+    st.markdown("#### Carrier Mix Over Time (Containers)")
     if len(carrier_monthly) > 0 and len(top5) > 0:
         carrier_top = carrier_monthly[carrier_monthly['Carrier'].isin(top5)]
-        fig = px.area(carrier_top, x='Month_Dt', y='Shipments', color='Carrier',
+        fig = px.area(carrier_top, x='Month_Dt', y='Containers', color='Carrier',
                       color_discrete_sequence=px.colors.qualitative.Set2)
-        fig.update_layout(height=400, xaxis_title="Month", yaxis_title="Shipments")
+        fig.update_layout(height=400, xaxis_title="Month", yaxis_title="Containers")
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("No carrier data for selected filters")
 
 with tab2:
     st.markdown("#### Monthly Average Delay")
+    st.caption("*Performance metrics based on shipments (B/L)*")
     
     if len(monthly) > 0:
         fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -207,8 +224,8 @@ with tab3:
         if len(c_trend) > 0:
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("##### Volume Trend")
-                fig = px.line(c_trend, x='Month_Dt', y='Shipments', color='Carrier', markers=True)
+                st.markdown("##### Container Volume Trend")
+                fig = px.line(c_trend, x='Month_Dt', y='Containers', color='Carrier', markers=True)
                 fig.update_layout(height=400, xaxis_title="Month")
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -234,18 +251,20 @@ with tab4:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("##### Average Volume by Month")
+            st.markdown("##### Average Container Volume by Month")
             month_agg = df_s.groupby('Month_Num').agg({
-                'Bill_of_Lading': 'nunique', 'Arrival_Delay': 'mean'
+                'Container_Number': 'count',
+                'Bill_of_Lading': 'nunique',
+                'Arrival_Delay': 'mean'
             }).reset_index()
-            month_agg.columns = ['Month', 'Shipments', 'Avg_Delay']
+            month_agg.columns = ['Month', 'Containers', 'Shipments', 'Avg_Delay']
             month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
             month_agg['Name'] = month_agg['Month'].apply(
                 lambda x: month_names[int(x)-1] if pd.notna(x) and 1 <= x <= 12 else 'Unknown')
             
-            fig = px.bar(month_agg, x='Name', y='Shipments', color='Avg_Delay',
-                         color_continuous_scale='RdYlGn_r', text='Shipments')
+            fig = px.bar(month_agg, x='Name', y='Containers', color='Avg_Delay',
+                         color_continuous_scale='RdYlGn_r', text='Containers')
             fig.update_traces(textposition='outside')
             fig.update_layout(height=400)
             st.plotly_chart(fig, use_container_width=True)
@@ -253,17 +272,19 @@ with tab4:
         with col2:
             st.markdown("##### Performance by Quarter")
             q_agg = df_s.groupby('Quarter').agg({
-                'Bill_of_Lading': 'nunique', 'Arrival_Delay': 'mean'
+                'Container_Number': 'count',
+                'Bill_of_Lading': 'nunique',
+                'Arrival_Delay': 'mean'
             }).reset_index()
-            q_agg.columns = ['Quarter', 'Shipments', 'Avg_Delay']
+            q_agg.columns = ['Quarter', 'Containers', 'Shipments', 'Avg_Delay']
             q_agg['Q'] = 'Q' + q_agg['Quarter'].astype(int).astype(str)
             
             fig = make_subplots(specs=[[{"secondary_y": True}]])
-            fig.add_trace(go.Bar(x=q_agg['Q'], y=q_agg['Shipments'], name='Shipments',
+            fig.add_trace(go.Bar(x=q_agg['Q'], y=q_agg['Containers'], name='Containers',
                                  marker_color='#1E3A5F'), secondary_y=False)
             fig.add_trace(go.Scatter(x=q_agg['Q'], y=q_agg['Avg_Delay'], name='Avg Delay',
                                      line=dict(color='#E74C3C', width=3), mode='lines+markers'), secondary_y=True)
-            fig.update_yaxes(title_text="Shipments", secondary_y=False)
+            fig.update_yaxes(title_text="Containers", secondary_y=False)
             fig.update_yaxes(title_text="Avg Delay (days)", secondary_y=True)
             fig.update_layout(height=400)
             st.plotly_chart(fig, use_container_width=True)

@@ -1,5 +1,6 @@
 """
 Risk Analysis & AI Clustering Page - All charts respond to filters
+Volume = Containers, Performance = Shipments (B/L)
 """
 
 import streamlit as st
@@ -207,6 +208,27 @@ with tab2:
         st.warning("No data matching filters")
 
 with tab3:
+    # ============== RISK SCORE INFO PANEL ==============
+    st.markdown("#### 📊 Risk Score Methodology")
+    with st.expander("ℹ️ How is the Risk Score calculated?", expanded=False):
+        st.markdown("""
+        **Risk Score** is a composite metric (0-100 scale) that combines three key risk factors:
+        
+        | Component | Weight | Scoring |
+        |-----------|--------|---------|
+        | **Average Delay** | 40 pts max | ≤0 days: 0 pts • 1-3 days: 10 pts • 4-7 days: 25 pts • >7 days: 40 pts |
+        | **Delay Variability (Std Dev)** | 30 pts max | ≤2: 0 pts • 3-5: 15 pts • >5: 30 pts |
+        | **Late Rate** | 30 pts max | ≤30%: 0 pts • 31-50%: 15 pts • >50%: 30 pts |
+        
+        **Interpretation:**
+        - 🟢 **0-20**: Low Risk - Reliable route with consistent performance
+        - 🟡 **21-50**: Medium Risk - Some delays, monitor closely
+        - 🔴 **51-100**: High Risk - Significant delays, action required
+        
+        *Higher scores indicate higher risk and require more attention.*
+        """)
+    
+    st.markdown("---")
     st.markdown("#### High Risk Routes")
     
     if len(high_risk_routes) > 0:
@@ -218,12 +240,13 @@ with tab3:
                 'Avg_Delay': '{:.1f}', 'On_Time_Rate': '{:.1f}%',
                 'Severe_Late_Rate': '{:.1f}%', 'Risk_Score': '{:.0f}',
                 'Shipments': '{:,}', 'Containers': '{:,}'
-            }),
+            }).background_gradient(subset=['Risk_Score'], cmap='RdYlGn_r'),
             use_container_width=True, height=400
         )
         
         fig = px.bar(high_risk_routes.head(15), x='Route', y='Avg_Delay', color='Risk_Score',
-                     color_continuous_scale='Reds', text='Avg_Delay')
+                     color_continuous_scale='Reds', text='Avg_Delay',
+                     hover_data={'Risk_Score': True, 'On_Time_Rate': ':.1f'})
         fig.update_traces(texttemplate='%{text:.1f}d', textposition='outside')
         fig.update_layout(height=400, xaxis_tickangle=45)
         st.plotly_chart(fig, use_container_width=True)
@@ -234,11 +257,12 @@ with tab3:
     st.markdown("#### Best Performing Carriers")
     
     if len(best_performers) > 0:
-        display_cols = ['Carrier_Name', 'Shipments', 'On_Time_Rate', 'Avg_Delay', 'Severe_Late_Rate']
+        display_cols = ['Carrier_Name', 'Shipments', 'Containers', 'On_Time_Rate', 'Avg_Delay', 'Severe_Late_Rate']
+        available_cols = [c for c in display_cols if c in best_performers.columns]
         st.dataframe(
-            best_performers[display_cols].head(10).style.format({
+            best_performers[available_cols].head(10).style.format({
                 'On_Time_Rate': '{:.1f}%', 'Avg_Delay': '{:.1f}',
-                'Severe_Late_Rate': '{:.1f}%', 'Shipments': '{:,}'
+                'Severe_Late_Rate': '{:.1f}%', 'Shipments': '{:,}', 'Containers': '{:,}'
             }),
             use_container_width=True
         )
@@ -281,6 +305,7 @@ with tab4:
                 **Investigate: {worst_route['Route']}**
                 - Average delay: {worst_route['Avg_Delay']:.1f} days
                 - On-time rate: {worst_route['On_Time_Rate']:.1f}%
+                - Risk Score: {worst_route['Risk_Score']:.0f}/100
                 
                 *Recommended: Analyze root cause, consider alternative carriers*
                 """)

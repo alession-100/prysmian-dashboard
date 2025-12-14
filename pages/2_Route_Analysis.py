@@ -1,5 +1,6 @@
 """
 Route Analysis Page - All charts respond to filters
+Volume = Containers, Performance = Shipments (B/L)
 """
 
 import streamlit as st
@@ -71,8 +72,16 @@ selected_destinations = st.sidebar.multiselect(
     help="Leave empty to include all destinations"
 )
 
-# Min volume
-min_volume = st.sidebar.slider("📊 Min Route Volume", 1, 50, 5)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📊 Statistical Filters")
+
+# Min containers (volume filter)
+min_containers = st.sidebar.slider("📦 Min Route Containers", 1, 200, 20,
+                                    help="Minimum container count for route to appear")
+
+# Min shipments (performance filter)
+min_shipments = st.sidebar.slider("📋 Min Route Shipments", 1, 50, 5,
+                                   help="Minimum shipment count for route to appear")
 
 st.sidebar.markdown("---")
 
@@ -102,33 +111,47 @@ else:
 
 # ============== CALCULATE STATS FROM FILTERED DATA ==============
 route_stats = get_route_stats(filtered_df)
-route_stats_filtered = route_stats[route_stats['Shipments'] >= min_volume]
 
-# Origin stats from filtered data
+# Apply filters
+route_stats_by_containers = route_stats[route_stats['Containers'] >= min_containers]
+route_stats_by_shipments = route_stats[route_stats['Shipments'] >= min_shipments]
+
+# Origin stats from filtered data (using containers for volume)
 origin_stats = filtered_df.groupby('Origin_Country_Name').agg({
-    'Bill_of_Lading': 'nunique', 'Arrival_Delay': 'mean', 'Is_Late': 'mean'
+    'Container_Number': 'count',
+    'Bill_of_Lading': 'nunique',
+    'Arrival_Delay': 'mean',
+    'Is_Late': 'mean'
 }).reset_index()
-origin_stats.columns = ['Country', 'Shipments', 'Avg_Delay', 'Late_Rate']
+origin_stats.columns = ['Country', 'Containers', 'Shipments', 'Avg_Delay', 'Late_Rate']
 origin_stats['Late_Rate'] = (origin_stats['Late_Rate'] * 100).round(1)
-origin_stats = origin_stats.sort_values('Shipments', ascending=False)
+origin_stats = origin_stats.sort_values('Containers', ascending=False)
 
-# Destination stats from filtered data
+# Destination stats from filtered data (using containers for volume)
 dest_stats = filtered_df.groupby('POD_Country_Name').agg({
-    'Bill_of_Lading': 'nunique', 'Arrival_Delay': 'mean', 'Is_Late': 'mean'
+    'Container_Number': 'count',
+    'Bill_of_Lading': 'nunique',
+    'Arrival_Delay': 'mean',
+    'Is_Late': 'mean'
 }).reset_index()
-dest_stats.columns = ['Country', 'Shipments', 'Avg_Delay', 'Late_Rate']
+dest_stats.columns = ['Country', 'Containers', 'Shipments', 'Avg_Delay', 'Late_Rate']
 dest_stats['Late_Rate'] = (dest_stats['Late_Rate'] * 100).round(1)
-dest_stats = dest_stats.sort_values('Shipments', ascending=False)
+dest_stats = dest_stats.sort_values('Containers', ascending=False)
 
 # ============== KPIs ==============
 st.markdown("### Route Overview")
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Routes", len(route_stats_filtered))
+col1.metric("Total Routes", len(route_stats_by_containers))
 col2.metric("Origin Countries", filtered_df['Origin_Country_Name'].nunique())
 col3.metric("Destination Countries", filtered_df['POD_Country_Name'].nunique())
-if len(route_stats_filtered) > 0:
-    best = route_stats_filtered.loc[route_stats_filtered['On_Time_Rate'].idxmax()]
-    col4.metric("Best Route", f"{best['On_Time_Rate']:.0f}% on-time")
+
+# Best route - show route name if 100% on-time
+if len(route_stats_by_shipments) > 0:
+    best = route_stats_by_shipments.loc[route_stats_by_shipments['On_Time_Rate'].idxmax()]
+    if best['On_Time_Rate'] >= 100:
+        col4.metric("Best Route - 100% on-time", best['Route'])
+    else:
+        col4.metric("Best Route", f"{best['On_Time_Rate']:.0f}% on-time", best['Route'])
 
 st.markdown("---")
 
@@ -139,10 +162,12 @@ with tab1:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### Top 15 Routes by Volume")
-        if len(route_stats_filtered) > 0:
-            fig = px.bar(route_stats_filtered.head(15), x='Shipments', y='Route', orientation='h',
-                         color='Avg_Delay', color_continuous_scale='RdYlGn_r', text='Shipments')
+        st.markdown("#### Top 15 Routes by Shipments")
+        if len(route_stats_by_shipments) > 0:
+            chart_data = route_stats_by_shipments.sort_values('Shipments', ascending=False).head(15)
+            fig = px.bar(chart_data, x='Shipments', y='Route', orientation='h',
+                         color='Avg_Delay', color_continuous_scale='RdYlGn_r', text='Shipments',
+                         labels={'Shipments': 'Shipments (B/L)', 'Avg_Delay': 'Avg Delay (days)'})
             fig.update_traces(textposition='outside')
             fig.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
             st.plotly_chart(fig, use_container_width=True)
@@ -151,23 +176,26 @@ with tab1:
     
     with col2:
         st.markdown("#### Route Performance Scatter")
-        if len(route_stats_filtered) > 0:
-            scatter_data = route_stats_filtered.copy()
-            scatter_data['Bubble_Size'] = scatter_data['Avg_Delay'].abs() + 3
+        st.caption("*Bubble size = Container volume*")
+        if len(route_stats_by_shipments) > 0:
+            scatter_data = route_stats_by_shipments.copy()
+            # Use Containers for bubble size
+            scatter_data['Bubble_Size'] = scatter_data['Containers'] / scatter_data['Containers'].max() * 50 + 5
             
             fig = px.scatter(scatter_data, x='Shipments', y='On_Time_Rate',
                              size='Bubble_Size', color='Severe_Late_Rate', color_continuous_scale='RdYlGn_r',
-                             hover_name='Route')
+                             hover_name='Route',
+                             hover_data={'Containers': True, 'Shipments': True, 'Avg_Delay': ':.1f'})
             fig.add_hline(y=50, line_dash="dash", line_color="gray")
-            fig.update_layout(height=500)
+            fig.update_layout(height=500, xaxis_title="Shipments (B/L)", yaxis_title="On-Time Rate (%)")
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("No data to display")
     
-    # Worst routes
+    # Worst routes (by performance)
     st.markdown("#### Routes with Highest Delays")
-    if len(route_stats_filtered) > 0:
-        worst = route_stats_filtered.nlargest(10, 'Avg_Delay')
+    if len(route_stats_by_shipments) > 0:
+        worst = route_stats_by_shipments.nlargest(10, 'Avg_Delay')
         fig = px.bar(worst, x='Route', y='Avg_Delay', color='Severe_Late_Rate',
                      color_continuous_scale='Reds', text='Avg_Delay')
         fig.update_traces(texttemplate='%{text:.1f}d', textposition='outside')
@@ -178,10 +206,10 @@ with tab2:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### Shipments by Origin Country")
+        st.markdown("#### Containers by Origin Country")
         if len(origin_stats) > 0:
-            fig = px.bar(origin_stats.head(12), x='Country', y='Shipments',
-                         color='Avg_Delay', color_continuous_scale='RdYlGn_r', text='Shipments')
+            fig = px.bar(origin_stats.head(12), x='Country', y='Containers',
+                         color='Avg_Delay', color_continuous_scale='RdYlGn_r', text='Containers')
             fig.update_traces(textposition='outside')
             fig.update_layout(height=400, xaxis_tickangle=45)
             st.plotly_chart(fig, use_container_width=True)
@@ -189,10 +217,10 @@ with tab2:
             st.warning("No data to display")
     
     with col2:
-        st.markdown("#### Shipments by Destination Country")
+        st.markdown("#### Containers by Destination Country")
         if len(dest_stats) > 0:
-            fig = px.bar(dest_stats.head(12), x='Country', y='Shipments',
-                         color='Avg_Delay', color_continuous_scale='RdYlGn_r', text='Shipments')
+            fig = px.bar(dest_stats.head(12), x='Country', y='Containers',
+                         color='Avg_Delay', color_continuous_scale='RdYlGn_r', text='Containers')
             fig.update_traces(textposition='outside')
             fig.update_layout(height=400, xaxis_tickangle=45)
             st.plotly_chart(fig, use_container_width=True)
@@ -204,27 +232,27 @@ with tab2:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("##### Origin Volume")
+        st.markdown("##### Origin Volume (Containers)")
         if len(origin_stats) > 0:
             fig = px.choropleth(origin_stats, locations='Country', locationmode='country names',
-                                color='Shipments', color_continuous_scale='Blues',
-                                hover_data={'Avg_Delay': ':.1f'})
+                                color='Containers', color_continuous_scale='Blues',
+                                hover_data={'Avg_Delay': ':.1f', 'Shipments': True})
             fig.update_layout(height=350, margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        st.markdown("##### Destination Volume")
+        st.markdown("##### Destination Volume (Containers)")
         if len(dest_stats) > 0:
             fig = px.choropleth(dest_stats, locations='Country', locationmode='country names',
-                                color='Shipments', color_continuous_scale='Greens',
-                                hover_data={'Avg_Delay': ':.1f'})
+                                color='Containers', color_continuous_scale='Greens',
+                                hover_data={'Avg_Delay': ':.1f', 'Shipments': True})
             fig.update_layout(height=350, margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
     st.markdown("#### Carrier x Route Performance Matrix")
     
-    metric = st.radio("Metric:", ["Volume", "Avg Delay", "On-Time %"], horizontal=True)
+    metric = st.radio("Metric:", ["Container Volume", "Avg Delay", "On-Time %"], horizontal=True)
     
     # Use filtered data for heatmap
     if len(filtered_df) > 0:
@@ -234,8 +262,9 @@ with tab3:
                              (filtered_df['Route'].isin(top_routes))]
         
         if len(df_sub) > 0:
-            if metric == "Volume":
-                matrix = get_carrier_route_matrix(df_sub, 'count')
+            if metric == "Container Volume":
+                matrix = df_sub.pivot_table(values='Container_Number', index='Carrier_Name',
+                                            columns='Route', aggfunc='count').fillna(0)
                 colorscale = 'Blues'
             elif metric == "Avg Delay":
                 matrix = get_carrier_route_matrix(df_sub, 'delay')
@@ -259,18 +288,18 @@ with tab3:
 with tab4:
     st.markdown("#### Route Data")
     
-    if len(route_stats_filtered) > 0:
-        display_cols = ['Route', 'Shipments', 'Containers', 'Avg_Delay', 'On_Time_Rate', 'Severe_Late_Rate']
+    if len(route_stats_by_containers) > 0:
+        display_cols = ['Route', 'Containers', 'Shipments', 'Avg_Delay', 'On_Time_Rate', 'Severe_Late_Rate']
         
         st.dataframe(
-            route_stats_filtered[display_cols].style.format({
+            route_stats_by_containers[display_cols].style.format({
                 'Avg_Delay': '{:.1f}', 'On_Time_Rate': '{:.1f}%',
                 'Severe_Late_Rate': '{:.1f}%', 'Shipments': '{:,}', 'Containers': '{:,}'
             }),
             use_container_width=True, height=500
         )
         
-        csv = route_stats_filtered.to_csv(index=False)
+        csv = route_stats_by_containers.to_csv(index=False)
         st.download_button("📥 Download Route Data (CSV)", csv, "route_statistics.csv", "text/csv")
     else:
         st.warning("No routes matching filters")
