@@ -1,5 +1,5 @@
 """
-AI Insights & LLM Prompts Page
+AI Insights & LLM Prompts Page - All data responds to filters
 """
 
 import streamlit as st
@@ -26,12 +26,72 @@ def get_data():
     st.stop()
 
 df = get_data()
-carrier_stats = get_carrier_stats(df)
-route_stats = get_route_stats(df)
-kpis = calculate_kpis(df)
+
+# ============== SIDEBAR FILTERS ==============
+st.sidebar.header("🔍 Filters")
+
+# Date filter
+if 'Departure_Date' in df.columns and df['Departure_Date'].notna().any():
+    min_date = df['Departure_Date'].min().date()
+    max_date = df['Departure_Date'].max().date()
+    date_range = st.sidebar.date_input(
+        "📅 Date Range",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date
+    )
+else:
+    date_range = None
+
+# Carrier filter
+all_carriers = sorted(df['Carrier_Name'].unique().tolist())
+selected_carriers = st.sidebar.multiselect(
+    "🏢 Carriers",
+    options=all_carriers,
+    default=[],
+    help="Leave empty to include all carriers"
+)
+
+# Origin filter
+all_origins = sorted(df['Origin_Country_Name'].unique().tolist())
+selected_origins = st.sidebar.multiselect(
+    "🌍 Origin Countries",
+    options=all_origins,
+    default=[],
+    help="Leave empty to include all origins"
+)
+
+st.sidebar.markdown("---")
+
+# ============== APPLY FILTERS ==============
+filtered_df = df.copy()
+
+if date_range and len(date_range) == 2:
+    filtered_df = filtered_df[
+        (filtered_df['Departure_Date'].dt.date >= date_range[0]) &
+        (filtered_df['Departure_Date'].dt.date <= date_range[1])
+    ]
+
+if selected_carriers:
+    filtered_df = filtered_df[filtered_df['Carrier_Name'].isin(selected_carriers)]
+
+if selected_origins:
+    filtered_df = filtered_df[filtered_df['Origin_Country_Name'].isin(selected_origins)]
+
+# Show filter status
+if len(filtered_df) < len(df):
+    st.sidebar.success(f"✅ {len(filtered_df):,} of {len(df):,} containers")
+    st.info("📊 **Note:** Prompts below are generated from your **filtered data**. Adjust filters to change context.")
+else:
+    st.sidebar.info(f"📊 All {len(df):,} containers")
+
+# ============== CALCULATE STATS FROM FILTERED DATA ==============
+carrier_stats = get_carrier_stats(filtered_df)
+route_stats = get_route_stats(filtered_df)
+kpis = calculate_kpis(filtered_df)
 
 st.markdown("### Ready-to-Use LLM Prompt Templates")
-st.markdown("Copy these prompts to use with Claude, ChatGPT, or other AI assistants.")
+st.markdown("Copy these prompts to use with Claude, ChatGPT, or other AI assistants. **Data reflects current filter selection.**")
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Risk Detection", "⚡ Optimization", "📊 Performance Review", "🌱 Sustainability"])
 
@@ -48,9 +108,11 @@ Analyze this shipment for risk factors:
 - Route: [ORIGIN] → [DESTINATION]
 - Scheduled Transit: [X] days
 
-Context from historical data:
+Context from historical data (filtered view):
 - High-risk carriers (>30% severe delays): {', '.join(high_risk[:3]) if high_risk else 'None identified'}
 - High-delay routes (>5 days avg): {', '.join(high_delay[:3]) if high_delay else 'None identified'}
+- Overall on-time rate: {kpis['on_time_rate']:.1f}%
+- Dataset: {kpis['total_shipments']:,} shipments
 
 Please provide:
 1. Risk level assessment (Low/Medium/High)
@@ -83,16 +145,21 @@ Please analyze:
 with tab2:
     st.markdown("#### Carrier & Route Optimization Prompts")
     
-    best = carrier_stats.nlargest(3, 'On_Time_Rate')[['Carrier_Name', 'On_Time_Rate', 'Shipments']].to_dict('records')
+    if len(carrier_stats) >= 3:
+        best = carrier_stats.nlargest(3, 'On_Time_Rate')[['Carrier_Name', 'On_Time_Rate', 'Shipments']].to_dict('records')
+        best_text = '\n'.join([f"- {c['Carrier_Name']}: {c['On_Time_Rate']:.1f}% on-time, {c['Shipments']:,} shipments" for c in best])
+    else:
+        best_text = "- Not enough data in current filter"
     
     prompt3 = f"""**PROMPT 3: Carrier Portfolio Optimization**
 
-Current top performers:
-{chr(10).join([f"- {c['Carrier_Name']}: {c['On_Time_Rate']:.1f}% on-time, {c['Shipments']:,} shipments" for c in best])}
+Current top performers (filtered data):
+{best_text}
 
 Overall portfolio:
 - Total carriers: {kpis['total_carriers']}
 - Average on-time rate: {kpis['on_time_rate']:.1f}%
+- Total shipments: {kpis['total_shipments']:,}
 
 Please recommend:
 1. Which carriers should receive increased volume allocation?
@@ -103,12 +170,12 @@ Please recommend:
     
     st.code(prompt3, language="markdown")
     
-    prompt4 = """**PROMPT 4: Route Optimization Analysis**
+    prompt4 = f"""**PROMPT 4: Route Optimization Analysis**
 
-Current route performance:
-- Total active routes: [N]
-- Average delay across routes: [X] days
-- Overall on-time rate: [Y]%
+Current route performance (filtered data):
+- Total active routes: {kpis['total_routes']}
+- Average delay across routes: {kpis['avg_delay']:.1f} days
+- Overall on-time rate: {kpis['on_time_rate']:.1f}%
 
 Please identify:
 1. Routes that would benefit from alternative carriers
@@ -124,7 +191,7 @@ with tab3:
     
     prompt5 = f"""**PROMPT 5: Executive Performance Summary**
 
-Key Metrics (current period):
+Key Metrics (filtered data):
 - Total shipments: {kpis['total_shipments']:,} (by Bill of Lading)
 - Total containers: {kpis['total_containers']:,}
 - Average delay: {kpis['avg_delay']:.1f} days
@@ -167,12 +234,16 @@ Please include:
 with tab4:
     st.markdown("#### Sustainability Assessment Prompts")
     
-    top_carriers = carrier_stats.head(5)['Carrier_Name'].tolist()
+    if len(carrier_stats) > 0:
+        top_carriers = carrier_stats.head(5)['Carrier_Name'].tolist()
+        carriers_text = '\n'.join([f"- {c}" for c in top_carriers])
+    else:
+        carriers_text = "- No carriers in current filter"
     
     prompt7 = f"""**PROMPT 7: Carrier Sustainability Research**
 
 Research sustainability initiatives for our top carriers:
-{chr(10).join([f"- {c}" for c in top_carriers])}
+{carriers_text}
 
 For each carrier, identify:
 1. Carbon neutrality commitments and timeline
@@ -208,22 +279,29 @@ Please develop:
 
 st.markdown("---")
 st.markdown("### 📤 Data Export for AI Analysis")
+st.markdown("**Export data based on current filters** to use with external AI tools.")
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("#### Carrier Summary Data")
-    carrier_export = carrier_stats[['Carrier_Name', 'Shipments', 'On_Time_Rate', 'Avg_Delay', 'Severe_Late_Rate']].head(15)
-    st.dataframe(carrier_export, use_container_width=True, height=300)
-    csv = carrier_export.to_csv(index=False)
-    st.download_button("📥 Download Carrier Data", csv, "carriers_for_ai.csv", "text/csv", key="c_dl")
+    if len(carrier_stats) > 0:
+        carrier_export = carrier_stats[['Carrier_Name', 'Shipments', 'On_Time_Rate', 'Avg_Delay', 'Severe_Late_Rate']].head(15)
+        st.dataframe(carrier_export, use_container_width=True, height=300)
+        csv = carrier_export.to_csv(index=False)
+        st.download_button("📥 Download Carrier Data", csv, "carriers_for_ai.csv", "text/csv", key="c_dl")
+    else:
+        st.warning("No carrier data for current filters")
 
 with col2:
     st.markdown("#### Route Summary Data")
-    route_export = route_stats[['Route', 'Shipments', 'On_Time_Rate', 'Avg_Delay', 'Severe_Late_Rate']].head(15)
-    st.dataframe(route_export, use_container_width=True, height=300)
-    csv = route_export.to_csv(index=False)
-    st.download_button("📥 Download Route Data", csv, "routes_for_ai.csv", "text/csv", key="r_dl")
+    if len(route_stats) > 0:
+        route_export = route_stats[['Route', 'Shipments', 'On_Time_Rate', 'Avg_Delay', 'Severe_Late_Rate']].head(15)
+        st.dataframe(route_export, use_container_width=True, height=300)
+        csv = route_export.to_csv(index=False)
+        st.download_button("📥 Download Route Data", csv, "routes_for_ai.csv", "text/csv", key="r_dl")
+    else:
+        st.warning("No route data for current filters")
 
 st.markdown("---")
 st.markdown("### 🔧 Custom Prompt Generator")
@@ -233,14 +311,16 @@ col1, col2 = st.columns(2)
 with col1:
     analysis_type = st.selectbox("Analysis Type", 
         ["Risk Assessment", "Performance Review", "Carrier Comparison", "Route Optimization"])
-    carrier = st.selectbox("Select Carrier (optional)", ["All Carriers"] + carrier_stats['Carrier_Name'].tolist())
+    
+    carrier_options = ["All Carriers"] + carrier_stats['Carrier_Name'].tolist() if len(carrier_stats) > 0 else ["All Carriers"]
+    carrier = st.selectbox("Select Carrier (optional)", carrier_options)
 
 with col2:
-    period = st.selectbox("Time Period", ["Last Month", "Last Quarter", "Last 6 Months", "Full Period"])
+    period = st.selectbox("Time Period", ["Current Filter", "Last Month", "Last Quarter", "Full Period"])
     output_format = st.selectbox("Output Format", ["Executive Summary", "Detailed Report", "Action Items", "Presentation"])
 
 if st.button("🚀 Generate Custom Prompt", type="primary"):
-    if carrier != "All Carriers":
+    if carrier != "All Carriers" and len(carrier_stats) > 0:
         c_data = carrier_stats[carrier_stats['Carrier_Name'] == carrier].iloc[0]
         context = f"""
 Carrier: {carrier}
@@ -250,7 +330,7 @@ Carrier: {carrier}
 - Severe Late Rate: {c_data['Severe_Late_Rate']:.1f}%"""
     else:
         context = f"""
-All Carriers:
+All Carriers (filtered):
 - Total Shipments: {kpis['total_shipments']:,}
 - On-Time Rate: {kpis['on_time_rate']:.1f}%
 - Average Delay: {kpis['avg_delay']:.1f} days
@@ -279,6 +359,6 @@ Format the response appropriately for a {output_format.lower()}."""
 
 st.markdown("---")
 st.info("""
-**💡 Tip:** These prompts are designed to work with any modern LLM. 
-For best results, combine the prompts with data exports from this dashboard.
+**💡 Tip:** These prompts automatically reflect your current filter selection. 
+Narrow down to specific carriers, routes, or time periods to get more focused analysis.
 """)
