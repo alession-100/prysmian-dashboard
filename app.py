@@ -1,6 +1,6 @@
 """
 Prysmian Ocean Logistics Analytics Dashboard
-Main application - Executive Overview
+Main application - Executive Dashboard
 """
 
 import streamlit as st
@@ -13,7 +13,7 @@ from shared import load_data, calculate_kpis, get_carrier_stats
 
 # Page config
 st.set_page_config(
-    page_title="Prysmian Logistics Dashboard",
+    page_title="Executive Dashboard | Prysmian Logistics",
     page_icon="🚢",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -23,6 +23,11 @@ st.markdown("""
 <style>
     .main-header { font-size: 2.5rem; font-weight: 700; color: #1E3A5F; margin-bottom: 0.5rem; }
     .sub-header { font-size: 1.1rem; color: #666; margin-bottom: 2rem; }
+    /* Hide default page name and show custom name */
+    [data-testid="stSidebarNav"] li:first-child a span { visibility: hidden; position: relative; }
+    [data-testid="stSidebarNav"] li:first-child a span::after { 
+        content: "Executive Dashboard"; visibility: visible; position: absolute; left: 0; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -132,37 +137,38 @@ col6.metric("Carriers", f"{kpis['total_carriers']}")
 st.markdown("---")
 
 # ============== CHARTS ==============
+# NOTE: Volume = Containers, Performance = Shipments (B/L)
 col_left, col_right = st.columns([1.2, 1])
 
 with col_left:
-    st.markdown("### Top Carriers by Shipment Volume")
-    chart_data = carrier_stats.head(12)
+    st.markdown("### Top Carriers by Container Volume")
+    chart_data = carrier_stats.sort_values('Containers', ascending=False).head(12)
     
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=chart_data['Carrier_Name'],
-        y=chart_data['Shipments'],
+        y=chart_data['Containers'],
         marker_color='#1E3A5F',
-        text=chart_data['Shipments'],
+        text=chart_data['Containers'],
         textposition='outside'
     ))
-    fig.update_layout(height=400, xaxis_title="Carrier", yaxis_title="Shipments (B/L)",
+    fig.update_layout(height=400, xaxis_title="Carrier", yaxis_title="Containers",
                       margin=dict(t=20, b=80))
     fig.update_xaxes(tickangle=45)
     st.plotly_chart(fig, use_container_width=True)
 
 with col_right:
-    st.markdown("### Market Share Distribution")
-    top5 = carrier_stats.head(5).copy()
-    others = carrier_stats.iloc[5:]['Shipments'].sum() if len(carrier_stats) > 5 else 0
+    st.markdown("### Market Share (by Containers)")
+    top5 = carrier_stats.sort_values('Containers', ascending=False).head(5).copy()
+    others = carrier_stats.sort_values('Containers', ascending=False).iloc[5:]['Containers'].sum() if len(carrier_stats) > 5 else 0
     
     if others > 0:
-        pie_data = pd.concat([top5[['Carrier_Name', 'Shipments']],
-                              pd.DataFrame({'Carrier_Name': ['Others'], 'Shipments': [others]})])
+        pie_data = pd.concat([top5[['Carrier_Name', 'Containers']],
+                              pd.DataFrame({'Carrier_Name': ['Others'], 'Containers': [others]})])
     else:
-        pie_data = top5[['Carrier_Name', 'Shipments']]
+        pie_data = top5[['Carrier_Name', 'Containers']]
     
-    fig = px.pie(pie_data, values='Shipments', names='Carrier_Name',
+    fig = px.pie(pie_data, values='Containers', names='Carrier_Name',
                  color_discrete_sequence=px.colors.qualitative.Set2, hole=0.4)
     fig.update_traces(textposition='outside', textinfo='percent+label')
     fig.update_layout(height=400, showlegend=False, margin=dict(t=20, b=20))
@@ -170,7 +176,7 @@ with col_right:
 
 st.markdown("---")
 
-# Delay Analysis
+# Delay Analysis (Performance = Shipments)
 col_d1, col_d2 = st.columns(2)
 
 with col_d1:
@@ -190,14 +196,15 @@ with col_d1:
 with col_d2:
     st.markdown("### Carrier Performance Quadrant")
     carrier_perf = carrier_stats.copy()
-    carrier_perf['Bubble_Size'] = carrier_perf['Avg_Delay'].abs() + 5
+    carrier_perf['Bubble_Size'] = carrier_perf['Containers'] / carrier_perf['Containers'].max() * 50 + 10
     
-    fig = px.scatter(carrier_perf, x='Shipments', y='On_Time_Rate',
+    fig = px.scatter(carrier_perf, x='Containers', y='On_Time_Rate',
                      size='Bubble_Size', color='Avg_Delay', color_continuous_scale='RdYlGn_r',
-                     hover_name='Carrier_Name', text='Carrier_Name')
+                     hover_name='Carrier_Name', text='Carrier_Name',
+                     hover_data={'Shipments': True, 'Containers': True, 'Avg_Delay': ':.1f'})
     fig.update_traces(textposition='top center', textfont_size=9)
     fig.add_hline(y=50, line_dash="dash", line_color="gray")
-    fig.update_layout(height=350, xaxis_title="Volume (Shipments)", yaxis_title="On-Time Rate (%)")
+    fig.update_layout(height=350, xaxis_title="Volume (Containers)", yaxis_title="On-Time Rate (%)")
     st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
@@ -214,7 +221,7 @@ with col1:
         st.success(f"**{best['Carrier_Name']}**\n\n"
                    f"- On-Time: **{best['On_Time_Rate']:.1f}%**\n"
                    f"- Avg Delay: {best['Avg_Delay']:.1f} days\n"
-                   f"- Shipments: {int(best['Shipments']):,}")
+                   f"- Containers: {int(best['Containers']):,}")
     else:
         st.warning("No carriers with 20+ shipments in filtered data")
 
@@ -225,18 +232,19 @@ with col2:
         st.error(f"**{worst['Carrier_Name']}**\n\n"
                  f"- Severe Late: **{worst['Severe_Late_Rate']:.1f}%**\n"
                  f"- Avg Delay: {worst['Avg_Delay']:.1f} days\n"
-                 f"- Shipments: {int(worst['Shipments']):,}")
+                 f"- Containers: {int(worst['Containers']):,}")
     else:
         st.info("No data available")
 
 with col3:
     st.markdown("#### 📊 Volume Leader")
     if len(carrier_stats) > 0:
-        leader = carrier_stats.iloc[0]
+        leader = carrier_stats.sort_values('Containers', ascending=False).iloc[0]
+        container_share = leader['Containers'] / carrier_stats['Containers'].sum() * 100
         st.info(f"**{leader['Carrier_Name']}**\n\n"
-                f"- Market Share: **{leader['Market_Share']:.1f}%**\n"
+                f"- Market Share: **{container_share:.1f}%**\n"
                 f"- On-Time: {leader['On_Time_Rate']:.1f}%\n"
-                f"- Shipments: {int(leader['Shipments']):,}")
+                f"- Containers: {int(leader['Containers']):,}")
     else:
         st.info("No data available")
 
@@ -244,6 +252,6 @@ st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
     Prysmian Ocean Logistics Analytics | GEMOS Challenge 2025<br>
-    <small>Shipments counted by unique Bill of Lading | Use sidebar filters to explore data</small>
+    <small>Volume = Containers | Performance metrics based on unique Bill of Lading | Use sidebar filters to explore data</small>
 </div>
 """, unsafe_allow_html=True)

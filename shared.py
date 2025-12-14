@@ -263,9 +263,25 @@ def perform_clustering(df, n_clusters=3):
 
 
 def calculate_risk_score(row):
-    """Calculate composite risk score."""
+    """
+    Calculate composite risk score (0-100 scale).
+    
+    Components:
+    - Average Delay (0-40 points): Higher delay = higher score
+    - Delay Variability/Std (0-30 points): More unpredictable = higher score
+    - Late Rate (0-30 points): Higher late % = higher score
+    
+    Risk Score interpretation:
+    - 0-20: Low Risk (green)
+    - 21-50: Medium Risk (amber)  
+    - 51-100: High Risk (red)
+    """
     score = 0
+    
+    # Average Delay component (max 40 points)
     delay = row.get('Avg_Delay', row.get('Arrival_Delay', 0))
+    if delay is None or pd.isna(delay):
+        delay = 0
     if delay <= 0:
         score += 0
     elif delay <= 3:
@@ -275,7 +291,10 @@ def calculate_risk_score(row):
     else:
         score += 40
     
+    # Delay Variability component (max 30 points)
     std_delay = row.get('Std_Delay', 0)
+    if std_delay is None or pd.isna(std_delay):
+        std_delay = 0
     if std_delay <= 2:
         score += 0
     elif std_delay <= 5:
@@ -283,11 +302,19 @@ def calculate_risk_score(row):
     else:
         score += 30
     
+    # Late Rate component (max 30 points)
+    # Note: Late_Rate is in percentage format (e.g., 45.0 for 45%)
     late_rate = row.get('Late_Rate', row.get('Severe_Late_Rate', 0))
+    if late_rate is None or (isinstance(late_rate, float) and pd.isna(late_rate)):
+        late_rate = 0
     if isinstance(late_rate, (int, float)):
-        if late_rate <= 0.3:
+        # Convert to percentage if needed (handle both decimal and percentage formats)
+        if late_rate <= 1:  # Likely decimal format (0.45)
+            late_rate = late_rate * 100
+        # Now late_rate is in percentage (e.g., 45 for 45%)
+        if late_rate <= 30:
             score += 0
-        elif late_rate <= 0.5:
+        elif late_rate <= 50:
             score += 15
         else:
             score += 30
